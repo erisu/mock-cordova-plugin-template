@@ -19,6 +19,4 @@
 #
 -->
 
-# mock-cordova-plugin-template
-
-Mock Cordova Plugin Template
+<!-- Add Targeted Platform's Specific Native and JS Code in This Directory -->

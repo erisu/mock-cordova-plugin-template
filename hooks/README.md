@@ -19,6 +19,4 @@
 #
 -->
 
-# mock-cordova-plugin-template
-
-Mock Cordova Plugin Template
+<!-- Add Hook Scripts in This Directory -->

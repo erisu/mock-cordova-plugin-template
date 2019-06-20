@@ -19,6 +19,7 @@
 #
 -->
 
-# mock-cordova-plugin-template
+# Change Log
 
-Mock Cordova Plugin Template
+## v1.0.0
+- Initial Commit
