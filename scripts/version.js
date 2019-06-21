@@ -47,109 +47,152 @@
  * git push origin master
  */
 const path = require('path');
-const { existsSync, readFileSync, writeFileSync } = require('fs');
+const { existsSync, readFileSync, writeFile } = require('fs');
 const { xml2json, json2xml } = require('xml-js');
-const nopt = require('nopt');
+const execa = require('execa');
 
 const _ROOT = path.join(require.main.filename, '..', '..');
 
-/**
- * Do not continue if plugin.xml file missing.
- */
-const plguinXmlPath = path.resolve(_ROOT, 'plugin.xml');
-if (!existsSync(plguinXmlPath)) {
-    throw new Error('Missing plugin.xml file.');
-}
+class Git {
+    add () {
+        return execa('git', ['add', '.']);
+    }
 
-/**
- * Load package.json
- * - Used to get current version
- */
-const pkgJsonPath = path.resolve(_ROOT, 'package.json');
-const pkgJson = require(pkgJsonPath);
+    commit (message) {
+        return execa('git', ['commit', '-S', '-m', message]);
+    }
 
-/**
- * Gets User Arguments
- * - dev: append "-dev" suffix if set
- */
-console.info(`[setup] Storing user defined arguments.`);
-const args = nopt({ dev: Boolean }, {}, process.argv, 0);
+    push (branch) {
+        return execa('git', ['push', 'origin', branch]);
+    }
 
-// Update with `-dev` prefix if dev flag set.
-if (args.dev) {
-    console.info(`[setup] Dev release flag detected`);
-    pkgJson.version = `${pkgJson.version}-dev`;
-    console.info(`[setup] Setting version: ${pkgJson.version}`);
-}
+    pushTag () {
+        return execa('git', ['push', '--tags']);
+    }
 
-/**
- * 1. Reads `plugin.xml` into variable
- * 2. Converts XML string to JSON
- * 3. Updates the plugin's version
- * 4. Converts JSON back to XML
- * 5. Writes out to `plugin.xml`
- */
-// Read in current plugin.xml file.
-console.info(`[plugin.xml] Reading original file`);
-const plguinXml = readFileSync(plguinXmlPath);
+    status () {
+        return execa('git', ['status', '-s']);
+    }
 
-// Convert plugin.xml content to JSON
-console.info(`[plugin.xml] Converting XML to JSON`);
-const pluginXmlJson = JSON.parse(xml2json(plguinXml, { compact: false, spaces: 0 }));
-
-// Update plugin.xml version.
-console.info(`[plugin.xml] Updating version to: ${pkgJson.version}`);
-for (let i = 0; i <= pluginXmlJson.elements.length; i++) {
-    let e = pluginXmlJson.elements[i];
-
-    if (e.type === 'element' && e.name === 'plugin') {
-        e.attributes.version = pkgJson.version;
-        break;
+    tag (tag) {
+        return execa('git', ['tag', tag]);
     }
 }
 
-// Write back to XML
-console.info(`[plugin.xml] Converting JSON back to XML`);
-const newPluginXml = json2xml(JSON.stringify(pluginXmlJson), { compact: false, spaces: 4 });
+class VersionPostProcess {
+    constructor () {
+        /**
+         * Load package.json
+         * - Used to get current version
+         */
+        console.info(`[setup] Loading package.json`);
+        this.pkgJsonPath = path.resolve(_ROOT, 'package.json');
+        this.pkgJson = require(this.pkgJsonPath);
 
-// // Write out updatetd plugin.xml
-console.info(`[plugin.xml] Updating original plugin.xml`);
-writeFileSync(plguinXmlPath, newPluginXml + '\n');
+        // Setup for Git Commands
+        this.git = new Git();
+    }
 
-/**
- * Updating Package-Lock if it exists and for Dev
- */
-const pkgJsonLockPath = path.resolve(_ROOT, 'package-lock.json');
-console.info(`[package-lock.json] Discovering package-lock.json file`);
-if (existsSync(pkgJsonLockPath)) {
-    if (args.dev) {
-        // Get package-lock
-        const packageLock = require(pkgJsonLockPath);
+    _loadPluginXml () {
+        /**
+         * Do not continue if plugin.xml file missing.
+         */
+        this.pluginXmlPath = path.resolve(_ROOT, 'plugin.xml');
+        if (!existsSync(this.pluginXmlPath)) {
+            throw new Error('Missing plugin.xml file.');
+        }
 
-        // Update only the package version
-        console.info(`[package-lock.json] Updating version to: ${pkgJson.version}`);
-        packageLock.version = pkgJson.version;
+        /**
+         * 1. Reads `plugin.xml` into variable
+         * 2. Converts XML string to JSON
+         * 3. Updates the plugin's version
+         * 4. Converts JSON back to XML
+         * 5. Writes out to `plugin.xml`
+         */
+        // Read in current plugin.xml file.
+        console.info(`[plugin.xml] Fetching original file`);
+        const plguinXml = readFileSync(this.pluginXmlPath);
 
-        // Write it back out
-        console.info(`[package-lock.json] Updating original package-lock.json`);
-        writeFileSync(
-            pkgJsonLockPath,
-            JSON.stringify(packageLock, null, 2) + '\n',
+        // Convert plugin.xml content to JSON
+        console.info(`[plugin.xml] Converting XML to JSON`);
+        this.pluginXmlJson = JSON.parse(xml2json(plguinXml, { compact: false, spaces: 0 }));
+    }
+
+    _updatePluginXml () {
+        if (!this.pluginXmlJson) {
+            this._loadPluginXml();
+        }
+
+        // Update plugin.xml version.
+        console.info(`[plugin.xml] Updating version to: ${this.pkgJson.version}`);
+        for (let i = 0; i <= this.pluginXmlJson.elements.length; i++) {
+            let e = this.pluginXmlJson.elements[i];
+
+            if (e.type === 'element' && e.name === 'plugin') {
+                e.attributes.version = this.pkgJson.version;
+                break;
+            }
+        }
+
+        // Write back to XML
+        console.info(`[plugin.xml] Converting JSON back to XML`);
+        const newPluginXml = json2xml(JSON.stringify(this.pluginXmlJson), { compact: false, spaces: 4 });
+
+        // // Write out updatetd plugin.xml
+        console.info(`[plugin.xml] Updating original plugin.xml`);
+        return writeFile(
+            this.pluginXmlPath,
+            newPluginXml + '\n',
             'utf8'
         );
-    } else {
-        console.info(`[package-lock.json] No change required`);
     }
-} else {
-    console.info(`[package-lock.json] File not detected`);
+
+    run () {
+        return Promise.resolve()
+            .then(this._updatePluginXml.bind(this))
+            .then(() => {
+                (async () => {
+                    console.info('[git] Files to be commited:');
+                    const { stdout } = await this.git.status();
+                    console.info(stdout);
+                })();
+
+                (async () => {
+                    console.info('[git] Adding files to commit');
+                    const { stdout } = await this.git.add();
+                    console.info(stdout);
+                })();
+
+                (async () => {
+                    console.info('[git] Commiting bump verion.');
+                    const { stdout } = await this.git.commit(`:bookmark: Release bump version: ${this.pkgJson.version}`);
+                    console.info(stdout);
+                })();
+
+                (async () => {
+                    if (!this.pkgJson.version.includes('-dev'))  {
+                        console.info(`[git] Creating new tag: ${this.pkgJson.version}`);
+                        const { stdout } = await this.git.tag(this.pkgJson.version);
+                        console.info(stdout);
+                    }
+                })();
+
+                (async () => {
+                    console.info('[git] Pushing new tag to origin');
+                    const { stdout } = await this.git.pushTag();
+                    console.info(stdout);
+                })();
+
+                (async () => {
+                    const branch = 'master';
+                    console.info(`[git] Pushing commit to ${branch}`);
+                    const { stdout } = await this.git.push(branch);
+                    console.info(stdout);
+                })();
+            });
+    }
 }
 
-if (args.dev) {
-    // Write out changed package.json with the -dev prefix
-    console.info(`[package.json] Updating original package.json with updated version: ${pkgJson.version}`);
-    writeFileSync(
-        pkgJsonPath,
-        JSON.stringify(pkgJson, null, 2) + '\n',
-        'utf8'
-    );
-}
+const versionPostProcess = new VersionPostProcess();
+
+versionPostProcess.run();

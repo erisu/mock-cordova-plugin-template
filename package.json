@@ -1,6 +1,6 @@
 {
   "name": "mock-cordova-plugin-template",
-  "version": "1.0.0-dev",
+  "version": "0.0.1-dev.0",
   "description": "Mock Cordova Plugin",
   "homepage": "https://github.com/erisu/mock-cordova-plugin-template#readme",
   "repository": {
@@ -33,6 +33,7 @@
     "eslint-plugin-node": "^8.0.1",
     "eslint-plugin-promise": "^4.1.1",
     "eslint-plugin-standard": "^4.0.0",
+    "execa": "^1.0.0",
     "jasmine": "^3.4.0",
     "nopt": "^4.0.1",
     "nyc": "^14.1.1",
