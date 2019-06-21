@@ -21,135 +21,180 @@
 
 /**
  * Release Steps
- *
- * // This line bumps the package for a `major` release and store the version in the environment variable `PACKAGE_RELEASE_VERSION`.
- * // If you  plan to release anything other then `major`, change the cli argument `major` to the desired release target.
- * // Other valid options are `patch` or `minor`.
- * export PACKAGE_RELEASE_VERSION=$(npm --no-git-tag-version version major | head -n 1)
- *
- * // NOTE!: this script will execute after `npm` runs the `version` bump process. This script handle the `plugin.xml` file updates.
- *
- * // Remove the `package-lock.json` file before adding and commiting to repo. This file is current not commited to repo.
- * rm -rf package-lock.json
- *
- * // Add, commit, create tag, and push to master + tag
- * git add .
- * git commit -S -m ":bookmark: Bump release version ${PACKAGE_RELEASE_VERSION}"
- * git tag ${PACKAGE_RELEASE_VERSION}
- * git push origin master --tags
- *
- * // Run the version script to append suffix `-dev`
- * npm run version -- --dev
- *
- * // Add, commit, and push to master `-dev` suffix.
- * git add .
- * git commit -S -m "Set -dev suffix"
- * git push origin master
+ * 
+ * The follow example below is demostrates a `major` release.
+ * The follow steps can be altered for `minor` or `patch` release.
+ * 
+ * ```
+ * npm --no-git-tag-version version major
+ * npm --no-git-tag-version version prerelease --preid=dev
+ * ```
+ * 
+ * ///////////////////////
+ * // Example Use Cases //
+ * ///////////////////////
+ * If the current version is `0.0.1-dev.0`:
+ * `npm --no-git-tag-version version major` will bump the version to `1.0.0`.
+ * 
+ * The proceding command bumps the version for `dev` and results as:
+ * `npm --no-git-tag-version version prerelease --preid=dev` resulting in `1.0.1-dev.0`
+ * 
+ * Continuing from `1.0.1-dev.0`:
+ * If one of the follow commands are executed, these are the outcomes.
+ * `npm --no-git-tag-version version patch` => `1.0.1`
+ * `npm --no-git-tag-version version minor` => `1.1.0`
+ * `npm --no-git-tag-version version major` => `2.0.0`
+ * 
+ * And as follows, when bumping for dev
+ * `1.0.2-dev.0`
+ * `1.1.1-dev.0`
+ * `2.0.1-dev.0`
+ * 
+ * //////////////////////
+ * // Under the Covers //
+ * //////////////////////
+ * - npm controls the bumping of `package.json` and `pacakge-lock.json` (is present).
+ * - version hookscript controls updating various files such as  `plugin.xml`. 
+ *   (Long-term goal is to not require updating other files. Use package.json is golden)
+ * - version hookscript will also commit perform the following git commands in order:
+ *   - IF major/minor/patch bump: `add`, `commit` `tag`, `push` tag, `push` commit
+ *     - Tag will be `draft/target-release-version`
+ *   - IF dev (`prerelease --preid=dev`): `add`, `commit`, `push` commit
  */
 const path = require('path');
 const { existsSync, readFileSync, writeFileSync } = require('fs');
 const { xml2json, json2xml } = require('xml-js');
-const nopt = require('nopt');
+const execa = require('execa');
 
 const _ROOT = path.join(require.main.filename, '..', '..');
 
-/**
- * Do not continue if plugin.xml file missing.
- */
-const plguinXmlPath = path.resolve(_ROOT, 'plugin.xml');
-if (!existsSync(plguinXmlPath)) {
-    throw new Error('Missing plugin.xml file.');
-}
+class Git {
+    constructor (dir) {
+        this.dir = dir;
+    }
 
-/**
- * Load package.json
- * - Used to get current version
- */
-const pkgJsonPath = path.resolve(_ROOT, 'package.json');
-const pkgJson = require(pkgJsonPath);
+    add () {
+        console.info('[git] Adding files to commit');
+        return execa.stdout('git', ['add', '.'], { cwd: this.dir });
+    }
 
-/**
- * Gets User Arguments
- * - dev: append "-dev" suffix if set
- */
-console.info(`[setup] Storing user defined arguments.`);
-const args = nopt({ dev: Boolean }, {}, process.argv, 0);
+    commit (message) {
+        console.info(`[git] Commiting bump verion with message: ${message}`);
+        return execa.stdout('git', ['commit', '-S', '-m', message], { cwd: this.dir });
+    }
 
-// Update with `-dev` prefix if dev flag set.
-if (args.dev) {
-    console.info(`[setup] Dev release flag detected`);
-    pkgJson.version = `${pkgJson.version}-dev`;
-    console.info(`[setup] Setting version: ${pkgJson.version}`);
-}
+    push (branch) {
+        console.info(`[git] Pushing commit to ${branch}`);
+        return execa.stdout('git', ['push', 'origin', branch], { cwd: this.dir });
+    }
 
-/**
- * 1. Reads `plugin.xml` into variable
- * 2. Converts XML string to JSON
- * 3. Updates the plugin's version
- * 4. Converts JSON back to XML
- * 5. Writes out to `plugin.xml`
- */
-// Read in current plugin.xml file.
-console.info(`[plugin.xml] Reading original file`);
-const plguinXml = readFileSync(plguinXmlPath);
+    pushTag () {
+        console.info('[git] Pushing tags to origin');
+        return execa.stdout('git', ['push', '--tags'], { cwd: this.dir });
+    }
 
-// Convert plugin.xml content to JSON
-console.info(`[plugin.xml] Converting XML to JSON`);
-const pluginXmlJson = JSON.parse(xml2json(plguinXml, { compact: false, spaces: 0 }));
+    status () {
+        return execa.stdout('git', ['status', '-s'], { cwd: this.dir }).then(stdout => {
+            console.info('[git] Files to be commited:');
+            console.info(stdout);
+        });
+    }
 
-// Update plugin.xml version.
-console.info(`[plugin.xml] Updating version to: ${pkgJson.version}`);
-for (let i = 0; i <= pluginXmlJson.elements.length; i++) {
-    let e = pluginXmlJson.elements[i];
-
-    if (e.type === 'element' && e.name === 'plugin') {
-        e.attributes.version = pkgJson.version;
-        break;
+    tag (tag) {
+        console.info(`[git] Creating new tag: ${tag}`);
+        return execa.stdout('git', ['tag', tag], { cwd: this.dir });
     }
 }
 
-// Write back to XML
-console.info(`[plugin.xml] Converting JSON back to XML`);
-const newPluginXml = json2xml(JSON.stringify(pluginXmlJson), { compact: false, spaces: 4 });
+class VersionPostProcess {
+    constructor () {
+        /**
+         * Load package.json
+         * - Used to get current version
+         */
+        console.info(`[setup] Loading package.json`);
+        this.pkgJsonPath = path.resolve(_ROOT, 'package.json');
+        this.pkgJson = require(this.pkgJsonPath);
 
-// // Write out updatetd plugin.xml
-console.info(`[plugin.xml] Updating original plugin.xml`);
-writeFileSync(plguinXmlPath, newPluginXml + '\n');
+        // Setup for Git Commands
+        this.git = new Git(_ROOT);
+    }
 
-/**
- * Updating Package-Lock if it exists and for Dev
- */
-const pkgJsonLockPath = path.resolve(_ROOT, 'package-lock.json');
-console.info(`[package-lock.json] Discovering package-lock.json file`);
-if (existsSync(pkgJsonLockPath)) {
-    if (args.dev) {
-        // Get package-lock
-        const packageLock = require(pkgJsonLockPath);
+    _loadPluginXml () {
+        /**
+         * Do not continue if plugin.xml file missing.
+         */
+        this.pluginXmlPath = path.resolve(_ROOT, 'plugin.xml');
+        if (!existsSync(this.pluginXmlPath)) {
+            throw new Error('Missing plugin.xml file.');
+        }
 
-        // Update only the package version
-        console.info(`[package-lock.json] Updating version to: ${pkgJson.version}`);
-        packageLock.version = pkgJson.version;
+        /**
+         * 1. Reads `plugin.xml` into variable
+         * 2. Converts XML string to JSON
+         * 3. Updates the plugin's version
+         * 4. Converts JSON back to XML
+         * 5. Writes out to `plugin.xml`
+         */
+        // Read in current plugin.xml file.
+        console.info(`[plugin.xml] Fetching original file`);
+        const plguinXml = readFileSync(this.pluginXmlPath);
 
-        // Write it back out
-        console.info(`[package-lock.json] Updating original package-lock.json`);
+        // Convert plugin.xml content to JSON
+        console.info(`[plugin.xml] Converting XML to JSON`);
+        this.pluginXmlJson = JSON.parse(xml2json(plguinXml, { compact: false, spaces: 0 }));
+    }
+
+    _updatePluginXml () {
+        if (!this.pluginXmlJson) {
+            this._loadPluginXml();
+        }
+
+        // Update plugin.xml version.
+        console.info(`[plugin.xml] Updating version to: ${this.pkgJson.version}`);
+        for (let i = 0; i <= this.pluginXmlJson.elements.length; i++) {
+            let e = this.pluginXmlJson.elements[i];
+
+            if (e.type === 'element' && e.name === 'plugin') {
+                e.attributes.version = this.pkgJson.version;
+                break;
+            }
+        }
+
+        // Write back to XML
+        console.info(`[plugin.xml] Converting JSON back to XML`);
+        const newPluginXml = json2xml(JSON.stringify(this.pluginXmlJson), { compact: false, spaces: 4 });
+
+        // // Write out updatetd plugin.xml
+        console.info(`[plugin.xml] Updating original plugin.xml`);
         writeFileSync(
-            pkgJsonLockPath,
-            JSON.stringify(packageLock, null, 2) + '\n',
+            this.pluginXmlPath,
+            newPluginXml + '\n',
             'utf8'
         );
-    } else {
-        console.info(`[package-lock.json] No change required`);
+
+        return Promise.resolve();
     }
-} else {
-    console.info(`[package-lock.json] File not detected`);
+
+    run () {
+        return Promise.resolve()
+            .then(() => this._updatePluginXml())
+            .then(() => this.git.status())
+            .then(() => this.git.add())
+            .then(() => this.git.commit(
+                !this.pkgJson.version.includes('-dev')
+                    ? `:bookmark: Release bump version: ${this.pkgJson.version}`
+                    : `:gear: Bump dev version: ${this.pkgJson.version}`
+            ))
+            .then(() => !this.pkgJson.version.includes('-dev')
+                ? this.git.tag(`draft/${this.pkgJson.version}`)
+                : Promise.resolve()
+            )
+            .then(() => this.git.pushTag())
+            .then(() => this.git.push(`master`));
+    }
 }
 
-if (args.dev) {
-    // Write out changed package.json with the -dev prefix
-    console.info(`[package.json] Updating original package.json with updated version: ${pkgJson.version}`);
-    writeFileSync(
-        pkgJsonPath,
-        JSON.stringify(pkgJson, null, 2) + '\n',
-        'utf8'
-    );
-}
+const versionPostProcess = new VersionPostProcess();
+
+versionPostProcess.run();
