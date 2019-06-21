@@ -22,7 +22,7 @@
   "scripts": {
     "eslint": "eslint ./",
     "test": "npm run eslint && nyc jasmine --config=spec/coverage.json",
-    "version": "node scripts/version.js"
+    "postversion": "node scripts/version.js"
   },
   "dependencies": {},
   "devDependencies": {
